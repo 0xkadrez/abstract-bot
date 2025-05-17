@@ -12,8 +12,30 @@ const MIN_ERC20_ABI = [
     "function name() view returns (string)",
     "function symbol() view returns (string)",
     "function totalSupply() view returns (uint256)",
-    "function decimals() view returns (uint8)"
+    "function decimals() view returns (uint8)",
+    "function balanceOf(address) view returns (uint256)",
+    "function transfer(address, uint256) returns (bool)"
 ];
+
+// Función para formatear números con comas como separadores de miles y sin decimales innecesarios
+function formatNumber(num) {
+    try {
+        // Si no es un número válido, devolver el valor original
+        if (isNaN(num)) return num;
+
+        // Convertir a número y eliminar decimales innecesarios (.0000)
+        const parsedNum = parseFloat(num);
+        const isInteger = Number.isInteger(parsedNum) || parsedNum.toString().endsWith('.0');
+        
+        // Formatear con separadores de miles
+        return new Intl.NumberFormat('en-US', {
+            maximumFractionDigits: isInteger ? 0 : 2
+        }).format(parsedNum);
+    } catch (error) {
+        console.error("Error al formatear número:", error);
+        return num; // Devolver el valor original en caso de error
+    }
+}
 
 async function getTransactionSafely(txHash) {
     try {
@@ -34,6 +56,34 @@ async function getTransactionSafely(txHash) {
     }
 }
 
+async function isValidERC20(address) {
+    try {
+        const tokenContract = new ethers.Contract(address, MIN_ERC20_ABI, provider);
+        
+        // Verificar métodos esenciales de ERC20
+        const promises = [
+            tokenContract.name().catch(() => null),
+            tokenContract.symbol().catch(() => null),
+            tokenContract.totalSupply().catch(() => null),
+            tokenContract.decimals().catch(() => null)
+        ];
+        
+        const [name, symbol, supply, decimals] = await Promise.all(promises);
+        
+        // Un token ERC20 válido debe tener al menos nombre, símbolo y supply
+        const isValid = 
+            name !== null && typeof name === 'string' && name.length > 0 &&
+            symbol !== null && typeof symbol === 'string' && symbol.length > 0 &&
+            supply !== null;
+        
+        console.log(`Verificación ERC20 para ${address}: ${isValid ? 'Es un token ERC20 válido' : 'No es un token ERC20 válido'}`);
+        return isValid;
+    } catch (error) {
+        console.error(`Error verificando si ${address} es un token ERC20:`, error.message);
+        return false;
+    }
+}
+
 async function getTokenInfo(tokenAddress) {
     try {
         const tokenContract = new ethers.Contract(tokenAddress, MIN_ERC20_ABI, provider);
@@ -43,6 +93,7 @@ async function getTokenInfo(tokenAddress) {
         
         try {
             name = await tokenContract.name();
+            console.log('Nombre del token:', name);
         } catch (error) {
             console.error(`Error al obtener el nombre del token ${tokenAddress}:`, error.message);
             name = "Nombre no disponible";
@@ -50,6 +101,7 @@ async function getTokenInfo(tokenAddress) {
         
         try {
             symbol = await tokenContract.symbol();
+            console.log('Símbolo del token:', symbol);
         } catch (error) {
             console.error(`Error al obtener el símbolo del token ${tokenAddress}:`, error.message);
             symbol = "???";
@@ -57,6 +109,7 @@ async function getTokenInfo(tokenAddress) {
         
         try {
             decimals = await tokenContract.decimals();
+            console.log('Decimales del token:', decimals);
         } catch (error) {
             console.error(`Error al obtener los decimales del token ${tokenAddress}:`, error.message);
             decimals = 18; // Valor por defecto para la mayoría de los tokens
@@ -64,7 +117,9 @@ async function getTokenInfo(tokenAddress) {
         
         try {
             const rawSupply = await tokenContract.totalSupply();
-            totalSupply = ethers.formatUnits(rawSupply, decimals);
+            const formattedSupply = ethers.formatUnits(rawSupply, decimals);
+            totalSupply = formatNumber(formattedSupply);
+            console.log('Supply del token:', totalSupply);
         } catch (error) {
             console.error(`Error al obtener el supply del token ${tokenAddress}:`, error.message);
             totalSupply = "Supply no disponible";
@@ -148,20 +203,29 @@ async function startBlockMonitoring() {
                             
                             if (extraAddresses.length > 0) {
                                 const createdAddress = extraAddresses[0];
-                                console.log(`Dirección token creado: ${createdAddress}`);
+                                console.log(`Dirección contrato creado: ${createdAddress}`);
                                 
-                                // Obtener información del token
-                                const tokenInfo = await getTokenInfo(createdAddress);
+                                // Primero verificamos si es un token ERC20 válido
+                                const isERC20 = await isValidERC20(createdAddress);
                                 
-                                // Crear y enviar el mensaje a Telegram
-                                const message = `🔥 <b>Nuevo Token Detectado en Abstract</b> 🔥\n\n` +
-                                    `<b>Contrato:</b> ${tokenInfo.address}\n` +
-                                    `<b>Nombre:</b> ${tokenInfo.name}\n` +
-                                    `<b>Símbolo:</b> ${tokenInfo.symbol}\n` +
-                                    `<b>Supply Total:</b> ${tokenInfo.totalSupply}\n\n` +
-                                    `<b>TX:</b> <a href="https://abscan.org/tx/${tx.hash}">Ver Transacción</a>`;
-                                console.log(message);
-                                await sendTelegramMessage(message);
+                                if (isERC20) {
+                                    console.log(`Confirmado: ${createdAddress} es un token ERC20`);
+                                    
+                                    // Obtener información del token
+                                    const tokenInfo = await getTokenInfo(createdAddress);
+                                    
+                                    // Crear y enviar el mensaje a Telegram
+                                    const message = `🔥 <b>Nuevo Token Detectado en Abstract</b> 🔥\n\n` +
+                                        `<b>Contrato:</b> ${tokenInfo.address}\n` +
+                                        `<b>Nombre:</b> ${tokenInfo.name}\n` +
+                                        `<b>Símbolo:</b> ${tokenInfo.symbol}\n` +
+                                        `<b>Supply Total:</b> ${tokenInfo.totalSupply}\n\n` +
+                                        `<b>TX:</b> <a href="https://abscan.org/tx/${tx.hash}">Ver Transacción</a>`;
+                                    console.log(message);
+                                    await sendTelegramMessage(message);
+                                } else {
+                                    console.log(`Se ignoró ${createdAddress} porque no es un token ERC20 válido`);
+                                }
                             }
                         } catch (receiptError) {
                             console.error(`Error al procesar receipt de tx ${tx.hash}:`, receiptError);
