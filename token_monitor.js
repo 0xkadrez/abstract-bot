@@ -7,6 +7,10 @@ const ABSTRACT_CONTRACT_DEPLOYER = process.env.ABSTRACT_CONTRACT_DEPLOYER;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID;
 
+// Direccion cero para identificar transferencia de tokens creados
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+
 const provider = new ethers.JsonRpcProvider(ABSTRACT_RPC_URL);
 const MIN_ERC20_ABI = [
     "function name() view returns (string)",
@@ -54,6 +58,21 @@ async function getTransactionSafely(txHash) {
         }
         throw error; // Re-lanzar otros tipos de errores
     }
+}
+
+// Función para encontrar tokens ERC20 creados en los logs de la transacción
+function findERC20TokensFromLogs(logs) {
+    let tokenAddress = null;
+    for (const log of logs) {
+        // Verificar si el log tiene la firma del evento Transfer
+        if (log.topics && log.topics.length >= 3 && ethers.dataSlice(log.topics[1], 12) === ZERO_ADDRESS.toLowerCase()) {
+                    // Este es probablemente un token ERC20 siendo creado
+                    tokenAddress = log.address;
+                    console.log(`Encontrado potencial token ERC20 en ${tokenAddress} con evento Transfer desde dirección cero`);
+                    continue;
+        }
+    }
+    return tokenAddress;
 }
 
 async function isValidERC20(address) {
@@ -197,22 +216,23 @@ async function startBlockMonitoring() {
                                 console.log(`No se pudo obtener receipt para tx ${tx.hash}`);
                                 continue;
                             }
-                            const logAddresses = [...new Set(receipt.logs.map(l => l.address.toLowerCase()))];
-                            const mainTo = txTo;
-                            const extraAddresses = logAddresses.filter(addr => addr !== mainTo);
                             
-                            if (extraAddresses.length > 0) {
-                                const createdAddress = extraAddresses[0];
-                                console.log(`Dirección contrato creado: ${createdAddress}`);
-                                
-                                // Primero verificamos si es un token ERC20 válido
-                                const isERC20 = await isValidERC20(createdAddress);
+                            // Buscar tokens en los logs analizando eventos Transfer
+                            const tokenAddress = findERC20TokensFromLogs(receipt.logs);
+                            
+                            if (!tokenAddress) {
+                                console.log(`No se encontraron tokens ERC20 en la transacción ${tx.hash}`);
+                                continue;
+                            }
+                            
+                                // Verificar si es un token ERC20 válido
+                                const isERC20 = await isValidERC20(tokenAddress);
                                 
                                 if (isERC20) {
-                                    console.log(`Confirmado: ${createdAddress} es un token ERC20`);
+                                    console.log(`Confirmado: ${tokenAddress} es un token ERC20`);
                                     
                                     // Obtener información del token
-                                    const tokenInfo = await getTokenInfo(createdAddress);
+                                    const tokenInfo = await getTokenInfo(tokenAddress);
                                     
                                     // Crear y enviar el mensaje a Telegram
                                     const message = `🔥 <b>Nuevo Token Detectado en Abstract</b> 🔥\n\n` +
@@ -224,9 +244,9 @@ async function startBlockMonitoring() {
                                     console.log(message);
                                     await sendTelegramMessage(message);
                                 } else {
-                                    console.log(`Se ignoró ${createdAddress} porque no es un token ERC20 válido`);
+                                    console.log(`Se ignoró ${tokenAddress} porque no es un token ERC20 válido`);
                                 }
-                            }
+                            
                         } catch (receiptError) {
                             console.error(`Error al procesar receipt de tx ${tx.hash}:`, receiptError);
                         }
