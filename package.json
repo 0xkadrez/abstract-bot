@@ -1,0 +1,27 @@
+{
+  "name": "abstract-token-monitor",
+  "version": "1.0.0",
+  "description": "Monitor de nuevos tokens en la red Abstract con notificaciones a Telegram",
+  "main": "token_monitor.js",
+  "scripts": {
+    "start": "node token_monitor.js",
+    "dev": "nodemon token_monitor.js"
+  },
+  "keywords": [
+    "blockchain",
+    "abstract",
+    "token",
+    "monitor",
+    "telegram"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.9.0",
+    "dotenv": "^16.3.1",
+    "ethers": "^6.14.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
